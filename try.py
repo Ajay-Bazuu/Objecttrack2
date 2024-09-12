@@ -21,8 +21,9 @@ if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
-# Define the previous position of the bottle
-prev_center = None
+# Initialize the CSRT tracker
+tracker = cv2.TrackerCSRT_create()
+tracking = False
 
 while True:
     # Capture frame-by-frame from the web camera
@@ -40,55 +41,38 @@ while True:
     net.setInput(blob)
     detections = net.forward()
 
-    bottle_center = None
+    if not tracking:
+        # Loop over the detections and draw boxes around objects
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
 
-    # Loop over the detections and draw boxes around objects
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
+            if confidence > 0.5:  # Confidence threshold
+                idx = int(detections[0, 0, i, 1])
+                if CLASSES[idx] == "person":
+                    box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                    (startX, startY, endX, endY) = box.astype("int")
+                    bbox = (startX, startY, endX - startX, endY - startY)
 
-        if confidence > 0.5:  # Confidence threshold
-            idx = int(detections[0, 0, i, 1])
-            if CLASSES[idx] == "bottle":
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
+                    # Initialize the tracker with the detected bounding box
+                    tracker.init(frame, bbox)
+                    tracking = True
+                    break
 
-                # Compute the center of the bounding box
-                bottle_center = ((startX + endX) // 2, (startY + endY) // 2)
+    else:
+        # Update the tracker and get the new position
+        success, bbox = tracker.update(frame)
 
-                # Draw the bounding box and label on the frame
-                label = f"{CLASSES[idx]}: {confidence:.2f}"
-                cv2.rectangle(frame, (startX, startY), (endX, endY), (0, 255, 0), 2)
-                cv2.putText(frame, label, (startX, startY - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        if success:
+            # Draw the bounding box around the tracked object
+            (x, y, w, h) = [int(v) for v in bbox]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(frame, "Tracking Person", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        else:
+            # Reset tracking if the object is lost
+            tracking = False
 
-    # If a bottle was detected, track its movement
-    if bottle_center:
-        if prev_center:
-            # Compute direction of movement
-            dx = bottle_center[0] - prev_center[0]
-            dy = bottle_center[1] - prev_center[1]
-
-            if abs(dx) > abs(dy):
-                if dx > 0:
-                    direction_x = "right"
-                else:
-                    direction_x = "left"
-                direction_y = ""
-            else:
-                if dy > 0:
-                    direction_y = "down"
-                else:
-                    direction_y = "up"
-                direction_x = ""
-
-            # Display direction
-            direction = f"Move: {direction_x} {direction_y}".strip()
-            cv2.putText(frame, direction, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-        # Update the previous center position
-        prev_center = bottle_center
-
-    # Display the output frame with bounding boxes and direction
-    cv2.imshow("Webcam Object Detection", frame)
+    # Display the output frame with bounding boxes and tracking info
+    cv2.imshow("Webcam Object Tracking", frame)
 
     # Exit the loop if 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
